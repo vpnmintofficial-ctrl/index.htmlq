@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const TOKEN = '8989024516:AAEAIwKbvaDe8HALbrjv-UoHcH6Pp2wZiso';
 const CHAT_ID = '8667961334';
 const PORT = process.env.PORT || 3000;
-const DOMAIN = process.env.DOMAIN || 'https://your-domain.com';
+const DOMAIN = process.env.DOMAIN || 'https://dox-toxx.onrender.com';
 
 const app = express();
 const bot = new TelegramBot(TOKEN, { polling: true });
