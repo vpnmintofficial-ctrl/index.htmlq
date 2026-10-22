@@ -68,7 +68,7 @@ app.get('/:id/', (req, res) => {
   const targetUrl = linksDB[shortId];
 
   if (!targetUrl) {
-    return res.redirect('https://www.tiktok.com/');
+    return res.redirect('https://dox-toxx.onrender.com');
   }
 
   res.send(`<!DOCTYPE html>
