@@ -28,7 +28,7 @@ bot.on('message', (msg) => {
     linksDB[shortId] = text;
     const fakeLink = `${DOMAIN}/${shortId}/`;
     
-    bot.sendMessage(msg.chat.id, '\u200b', {
+    bot.sendMessage(msg.chat.id, '👇 Нажмите кнопку ниже', {
       reply_markup: {
         inline_keyboard: [[{ text: 'Открыть', web_app: { url: fakeLink } }]]
       }
@@ -40,7 +40,18 @@ bot.on('inline_query', async (query) => {
   try {
     const text = query.query;
 
-    if (!text || !text.includes('tiktok.com')) {
+    // Если пустой запрос, можно показать подсказку
+    if (!text) {
+      return bot.answerInlineQuery(query.id, [{
+        type: 'article',
+        id: 'hint',
+        title: 'Введите ссылку на TikTok',
+        description: 'Например: https://www.tiktok.com/@user/video/123456',
+        input_message_content: { message_text: 'Введите ссылку на TikTok' }
+      }], { cache_time: 0 });
+    }
+
+    if (!text.includes('tiktok.com')) {
       return bot.answerInlineQuery(query.id, [], { cache_time: 0 });
     }
 
@@ -51,10 +62,10 @@ bot.on('inline_query', async (query) => {
     const result = {
       type: 'article',
       id: shortId,
-      title: 'Открыть',
-      description: 'Отправить',
+      title: 'Открыть видео',
+      description: 'Нажмите, чтобы отправить',
       input_message_content: {
-        message_text: '\u200b' 
+        message_text: '👇 Нажмите кнопку ниже, чтобы открыть видео' 
       },
       reply_markup: {
         inline_keyboard: [[{ text: 'Открыть', url: appLink }]]
